@@ -1,0 +1,83 @@
+name: Cleanup Old Test Branches
+
+on:
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch: # Allow manual triggering
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Fetch all branches
+      
+      - name: Setup Git
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+      
+      - name: Delete old test branches
+        run: |
+          echo "Fetching all branches..."
+          git fetch --all --prune
+          
+          echo "Current date: $(date)"
+          echo "Cutoff date (7 days ago): $(date -d '7 days ago')"
+          
+          # Get all remote branches that start with "test-"
+          branches=$(git branch -r | grep -E 'origin/test-' | sed 's/origin\///')
+          
+          if [ -z "$branches" ]; then
+            echo "No test branches found."
+            exit 0
+          fi
+          
+          echo "Found test branches:"
+          echo "$branches"
+          
+          # Process each branch
+          for branch in $branches; do
+            echo "Checking branch: $branch"
+            
+            # Get the last commit date for this branch
+            last_commit_date=$(git log -1 --format=%cd --date=iso "origin/$branch" 2>/dev/null)
+            
+            if [ -z "$last_commit_date" ]; then
+              echo "Could not get commit date for $branch, skipping..."
+              continue
+            fi
+            
+            echo "Last commit date: $last_commit_date"
+            
+            # Convert dates to seconds for comparison
+            last_commit_seconds=$(date -d "$last_commit_date" +%s)
+            cutoff_seconds=$(date -d '7 days ago' +%s)
+            
+            if [ $last_commit_seconds -lt $cutoff_seconds ]; then
+              echo "Branch $branch is older than 7 days. Deleting..."
+              git push origin --delete "$branch" || echo "Failed to delete $branch"
+            else
+              echo "Branch $branch is less than 7 days old. Keeping..."
+            fi
+            
+            echo "---"
+          done
+          
+          echo "Cleanup complete!"
+      
+      - name: Summary
+        run: |
+          echo "## Cleanup Summary" >> $GITHUB_STEP_SUMMARY
+          echo "Workflow run completed at: $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "This workflow:" >> $GITHUB_STEP_SUMMARY
+          echo "- Runs daily at 2 AM UTC" >> $GITHUB_STEP_SUMMARY
+          echo "- Deletes branches starting with 'test-' that are older than 7 days" >> $GITHUB_STEP_SUMMARY
+          echo "- Preserves the main branch and all other branches" >> $GITHUB_STEP_SUMMARY
